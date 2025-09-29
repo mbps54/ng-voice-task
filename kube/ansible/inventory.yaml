@@ -1,0 +1,40 @@
+all:
+  hosts:
+    vm_1:
+      ansible_host: 85.90.244.188
+      ansible_port: 2022
+      ansible_user: root
+      ansible_connection: ssh
+    vm_2:
+      ansible_host: 139.162.150.79
+      ansible_port: 2022
+      ansible_user: root
+      ansible_connection: ssh
+    vm_3:
+      ansible_host: 139.162.150.196
+      ansible_port: 2022
+      ansible_user: root
+      ansible_connection: ssh
+
+control:
+  hosts:
+    vm_1:
+  vars:
+    hostname: control
+
+node1:
+  hosts:
+    vm_2:
+  vars:
+    hostname: node1
+
+node2:
+  hosts:
+    vm_3:
+  vars:
+    hostname: node2
+
+nodes:
+  children:
+    node1:
+    node2:

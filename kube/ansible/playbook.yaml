@@ -1,0 +1,475 @@
+#ansible-playbook playbook.yaml
+#ansible-playbook playbook.yaml --tags general_settings
+#ansible-playbook playbook.yaml --tags install_k8s
+#ansible-playbook playbook.yaml --tags install_portainer
+
+
+---
+
+- name: General settings
+  hosts: all
+  remote_user: root
+  vars:
+    ansible_port: 2022
+    admin_user: admin
+    admin_groups:
+      - admin
+      - docker
+      - wheel
+    admin_password_hash: "$6$qeP1TvsvSuouVaY/$fJS5fEvockCt0/aXuDFNi4e7d.IpUkNXhgILwWBMPj.45NcnXU2Ha4du7UDy1Ehwr0DkBv..uiAKBaW5fP2hm."   # I would use Vault in prod
+    ssh_pubkey_path: "~/.ssh/id_rsa.pub"
+  gather_facts: yes
+  become: yes
+  tags:
+    - general_settings
+
+  tasks:
+    - name: Ensure groups exist
+      ansible.builtin.group:
+        name: "{{ item }}"
+        state: present
+      loop: "{{ admin_groups }}"
+
+    - name: Create admin user with password and group membership
+      ansible.builtin.user:
+        name: "{{ admin_user }}"
+        state: present
+        shell: /bin/bash
+        create_home: true
+        groups: "{{ admin_groups | join(',') }}"
+        append: true
+        password: "{{ admin_password_hash }}"
+
+    - name: Set up SSH authentication
+      ansible.builtin.authorized_key:
+        user: "{{ admin_user }}"
+        state: present
+        key: "{{ lookup('file', ssh_pubkey_path) }}"
+        manage_dir: true
+
+    - name: Update package cache
+      ansible.builtin.package:
+        update_cache: true
+
+    - name: Install required packages
+      package:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - curl
+        - wget
+        - net-tools
+        - bash-completion
+        - software-properties-common
+        - apt-transport-https
+        - ca-certificates
+      ignore_errors: no
+
+    - name: Change the SSH port in sshd_config #easy way lower hacker's appempts to log in
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^#?Port '
+        line: 'Port 2022'
+        state: present
+
+    - name: Restart SSH service
+      service:
+        name: ssh
+        state: restarted
+
+    - name: Ensure SSH service is running and enabled
+      service:
+        name: ssh
+        enabled: yes
+        state: started
+
+
+- name: Install Kubernetes part 1 (control node)
+  hosts: control
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k8s
+  vars:
+    desired_hostname: "{{ hostvars[inventory_hostname].hostname | default(inventory_hostname) }}"
+
+  tasks:
+    - name: Set hostname from inventory var
+      ansible.builtin.hostname:
+        name: "{{ desired_hostname }}"
+
+    - name: Ensure localhost entry exists
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1\s+localhost\b'
+        line: '127.0.0.1   localhost'
+        state: present
+        create: yes
+        mode: '0644'
+
+    - name: Ensure controlplane entry exists
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1\s+{{ desired_hostname | regex_escape() }}\b'
+        line: "127.0.0.1   {{ desired_hostname }}"
+        state: present
+
+
+- name: Install Kubernetes part 2 (worker nodes)
+  hosts: nodes
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k8s
+  vars:
+    desired_hostname: "{{ hostvars[inventory_hostname].hostname | default(inventory_hostname) }}"
+
+  tasks:
+    - name: Set hostname from inventory var
+      ansible.builtin.hostname:
+        name: "{{ desired_hostname }}"
+
+    - name: Ensure localhost entry exists
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1\s+localhost\b'
+        line: '127.0.0.1   localhost'
+        state: present
+        create: yes
+        mode: '0644'
+
+    - name: Ensure controlplane entry exists
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: '^127\.0\.0\.1\s+{{ desired_hostname | regex_escape() }}\b'
+        line: "127.0.0.1   {{ desired_hostname }}"
+        state: present
+
+
+- name: Install Kubernetes part 3 (all nodes)
+  hosts: all
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k8s
+  vars:
+    CRIO_VERSION: "v1.30"
+    CRICTL_VERSION: "v1.30.0"
+    K8S_DEB_CHANNEL: "v1.30"
+    K8S_VER: "1.30.0-1.1"
+    keyrings_dir: /etc/apt/keyrings
+
+  tasks:
+    # SWAP off + remove from fstab
+    - name: Disable swap now
+      ansible.builtin.command: swapoff -a
+      when: ansible_swaptotal_mb | default(0) | int > 0
+      changed_when: false
+
+    - name: Remove swap entries from /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^\s*[^#]\S+\s+\S+\s+swap\s+.*$'
+        replace: ''
+      notify: Remount fstab (noop)
+
+    # Core and bridge/overlay
+    - name: Ensure /etc/modules-load.d/k8s.conf present
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        mode: '0644'
+        content: |
+          overlay
+          br_netfilter
+
+    - name: Load kernel module overlay
+      community.general.modprobe:
+        name: overlay
+        state: present
+
+    - name: Load kernel module br_netfilter
+      community.general.modprobe:
+        name: br_netfilter
+        state: present
+
+    # ip forwarding enable (persist + apply)
+    - name: Persist k8s sysctl settings
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/k8s.conf
+        mode: '0644'
+        content: |
+          net.bridge.bridge-nf-call-iptables = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward = 1
+      notify: Apply sysctl settings
+
+    # Apply changes
+    - name: Apply sysctl now
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    # CRI-O istall
+    - name: Ensure keyrings directory exists
+      ansible.builtin.file:
+        path: "{{ keyrings_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Download CRI-O repo key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/addons:/cri-o:/stable:/{{ CRIO_VERSION }}/deb/Release.key"
+        dest: "/tmp/crio-release.key"
+        mode: '0644'
+      register: crio_key_dl
+
+    - name: Install CRI-O key to keyring (dearmor)
+      ansible.builtin.command:
+        cmd: "gpg --dearmor -o {{ keyrings_dir }}/cri-o-apt-keyring.gpg /tmp/crio-release.key"
+        creates: "{{ keyrings_dir }}/cri-o-apt-keyring.gpg"
+
+    - name: Add CRI-O apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by={{ keyrings_dir }}/cri-o-apt-keyring.gpg] https://pkgs.k8s.io/addons:/cri-o:/stable:/{{ CRIO_VERSION }}/deb/ /"
+        filename: "cri-o"
+        state: present
+        update_cache: yes
+
+    - name: Install CRI-O
+      ansible.builtin.apt:
+        name: cri-o
+        state: present
+        update_cache: yes
+
+    - name: Enable and start crio
+      ansible.builtin.systemd:
+        name: crio
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    # crictl install
+    - name: Download crictl tarball
+      ansible.builtin.get_url:
+        url: "https://github.com/kubernetes-sigs/cri-tools/releases/download/{{ CRICTL_VERSION }}/crictl-{{ CRICTL_VERSION }}-linux-amd64.tar.gz"
+        dest: "/tmp/crictl-{{ CRICTL_VERSION }}-linux-amd64.tar.gz"
+        mode: '0644'
+
+    - name: Install crictl to /usr/local/bin
+      ansible.builtin.unarchive:
+        src: "/tmp/crictl-{{ CRICTL_VERSION }}-linux-amd64.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        creates: /usr/local/bin/crictl
+
+    - name: Cleanup crictl tarball
+      ansible.builtin.file:
+        path: "/tmp/crictl-{{ CRICTL_VERSION }}-linux-amd64.tar.gz"
+        state: absent
+
+    # Kubernetes repo and packets
+    - name: Download Kubernetes repo key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ K8S_DEB_CHANNEL }}/deb/Release.key"
+        dest: "/tmp/kubernetes-release.key"
+        mode: '0644'
+
+    - name: Install Kubernetes key to keyring (dearmor)
+      ansible.builtin.command:
+        cmd: "gpg --dearmor -o {{ keyrings_dir }}/kubernetes-apt-keyring.gpg /tmp/kubernetes-release.key"
+        creates: "{{ keyrings_dir }}/kubernetes-apt-keyring.gpg"
+
+    - name: Add Kubernetes apt repo
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by={{ keyrings_dir }}/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/{{ K8S_DEB_CHANNEL }}/deb/ /"
+        filename: "kubernetes"
+        state: present
+        update_cache: yes
+
+    - name: Install kubelet, kubeadm, kubectl at specific version
+      ansible.builtin.apt:
+        name:
+          - "kubelet={{ K8S_VER }}"
+          - "kubeadm={{ K8S_VER }}"
+          - "kubectl={{ K8S_VER }}"
+        state: present
+        update_cache: yes
+
+    - name: Hold kube* packages
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop:
+        - kubelet
+        - kubeadm
+        - kubectl
+
+  handlers:
+    - name: Apply sysctl settings
+      ansible.builtin.command: sysctl --system
+      listen: Apply sysctl settings
+
+    - name: Remount fstab (noop)
+      ansible.builtin.debug:
+        msg: "fstab updated (no remount performed)"
+
+
+- name: Install Kubernetes part 4 (control node)
+  hosts: control
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k8s_4
+  vars:
+    # Extra SAN for the API server certificate
+    apiserver_san: "{{ hostvars[inventory_hostname].hostname | default(inventory_hostname) }}"
+    # Pod network CIDR (default for Flannel)
+    pod_network_cidr: "10.244.0.0/16"
+    # Control plane advertise address (default to ansible_default_ipv4)
+    controlplane_ip: "{{ ansible_default_ipv4.address }}"
+    # User who should own kubeconfig
+    kubeconfig_user: "{{ ansible_user | default('admin') }}"
+    kubeconfig_home: "/home/{{ kubeconfig_user }}"
+    join_cmd_path: "/etc/kubernetes/kubeadm_join_command.sh"
+    # Flannel vars
+    flannel_version: "v0.20.2"
+    flannel_manifest: "kube-flannel.yml"
+    flannel_iface: "eth0"
+    admin_user: admin
+    admin_home: "/home/{{ admin_user }}"
+
+  tasks:
+    - name: Check if control plane is already initialized
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: admin_conf
+
+    - name: Initialize control plane with kubeadm # run with 1 CPU only
+      ansible.builtin.command: >
+        kubeadm init
+        --apiserver-cert-extra-sans={{ apiserver_san }}
+        --apiserver-advertise-address {{ controlplane_ip }}
+        --pod-network-cidr={{ pod_network_cidr }}
+        --ignore-preflight-errors=NumCPU
+      args:
+        creates: /etc/kubernetes/admin.conf
+      when: not admin_conf.stat.exists
+
+    - name: Ensure /etc/kubernetes directory exists
+      ansible.builtin.file:
+        path: /etc/kubernetes
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Generate kubeadm join command
+      ansible.builtin.shell: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+      when: admin_conf.stat.exists
+
+    - name: Save kubeadm join command to file
+      ansible.builtin.copy:
+        dest: "{{ join_cmd_path }}"
+        content: |
+          #!/bin/bash
+          {{ join_cmd.stdout | trim }}
+        owner: root
+        group: root
+        mode: '0750'
+      when: join_cmd is defined and join_cmd.stdout is defined
+
+    - name: Show kubeadm join command
+      ansible.builtin.debug:
+        msg: "{{ join_cmd.stdout | trim }}"
+      when: join_cmd is defined and join_cmd.stdout is defined
+
+    - name: Ensure kubeconfig dir exists for admin
+      ansible.builtin.file:
+        path: "{{ admin_home }}/.kube"
+        state: directory
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: '0750'
+
+    - name: Copy admin.conf to admin's kubeconfig (as root, set owner)
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ admin_home }}/.kube/config"
+        remote_src: true
+        owner: "{{ admin_user }}"
+        group: "{{ admin_user }}"
+        mode: '0600'
+      when: admin_conf.stat.exists
+
+    - name: Download Flannel manifest
+      ansible.builtin.get_url:
+        url: "https://raw.githubusercontent.com/flannel-io/flannel/{{ flannel_version }}/Documentation/kube-flannel.yml"
+        dest: "/tmp/{{ flannel_manifest }}"
+        mode: '0644'
+
+    - name: Ensure --iface is set in flannel args
+      ansible.builtin.replace:
+        path: "/tmp/{{ flannel_manifest }}"
+        regexp: '(\s+- --kube-subnet-mgr)'
+        replace: "\\1\n        - --iface={{ flannel_iface }}"
+
+    - name: Apply Flannel CNI manifest
+      ansible.builtin.command: kubectl apply -f /tmp/{{ flannel_manifest }}
+      environment:
+        KUBECONFIG: "/etc/kubernetes/admin.conf"
+      register: flannel_apply
+      changed_when: "'created' in flannel_apply.stdout or 'configured' in flannel_apply.stdout"
+
+    # Produce the join command and share it with other hosts
+    - name: Generate kubeadm join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+      when: admin_conf.stat.exists
+
+    - name: Publish join command as a fact (visible to other hosts)
+      ansible.builtin.set_fact:
+        kubeadm_join_cmd: "{{ join_cmd.stdout | trim }}"
+      run_once: true
+
+
+- name: Install Kubernetes part 5 (worker nodes)
+  hosts: nodes
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k8s
+  vars:
+    cri_socket: "unix:///var/run/crio/crio.sock"
+
+  tasks:
+    - name: Join node if not already joined
+      ansible.builtin.command: >
+        {{ hostvars[groups['control'][0]].kubeadm_join_cmd }}
+        --cri-socket {{ cri_socket }}
+      args:
+        creates: /etc/kubernetes/kubelet.conf
+
+
+- name: Install Helm
+  hosts:
+    - control
+  gather_facts: yes
+  become: yes
+  tags:
+    - install_k3s_helm
+
+  tasks:
+    - name: Install Helm
+      unarchive:
+        src: https://get.helm.sh/helm-v3.14.0-linux-amd64.tar.gz
+        dest: /usr/local/bin
+        extra_opts: "--strip-components=1"
+        owner: admin
+        group: admin
+        mode: 0755
+        remote_src: true
+      args:
+        creates: /usr/local/bin/helm
+
