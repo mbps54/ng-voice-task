@@ -13,3 +13,19 @@
 5. Suggest a Disaster recovery solution for the DB.
 6. Find a flexible way to connect the Pod to a new network other than the Pods networks with proper routes. no LoadBalancer service is needed.
 7. Find a way to allow the deployment engineer to schedule specific replicas of the database cluster on specific k8s nodes.
+
+
+## Solution & Comments
+### 1. Deploy a kubernetes cluster, locally or on a public cloud.
+For this task, Ansible was used to provision a Linux machine from scratch.
+The playbook automates the following steps:
+- Adding the required users, installing needed utilities, changing SSH port to custom port 2022
+- Installing vanila Kubernetes distribution<br>
+
+Steps to install Kubernetes
+1. Provision 3x Linux VM with Ubuntu 22.04
+2. Update `inventory.yaml` file with correct IP
+3. Run Ansible playbook to install K8s
+```
+ansible-playbook playbook.yaml
+```
