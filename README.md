@@ -55,3 +55,72 @@ Check it
 curl http://139.162.150.79:30080
 curl http://139.162.150.196:30080
 ```
+
+### 4. Suggest and implement a way to only allows the web server pods to initiate connections to the database pods
+Need swap Flannel ==> Calico to enforce Network Policy
+Run Ansible playbook to install and enable Calico
+```
+ansible-playbook playbook.yaml --tags calico
+```
+Network policy can be used to achive this task.
+Ansible playbook has been updated with tasks with tag `run_webserver`
+```
+ansible-playbook playbook.yaml --tags network_policy
+```
+Check it from a web pod
+```
+kubectl run test-web \
+  -n web \
+  --rm -it \
+  --image=busybox:1.36 \
+  --restart=Never -- \
+  sh
+```
+and test
+```
+nc -zv database-mariadb-galera.database.svc.cluster.local 3306
+```
+Check it from any other pod
+```
+kubectl run test-other \
+  -n default \
+  --rm -it \
+  --image=busybox:1.36 \
+  --restart=Never -- \
+  sh
+```
+and test
+```
+nc -zv database-mariadb-galera.database.svc.cluster.local 3306
+```
+So it does not work as expectes ==> Helm chart has already deployed a network policy (they are additive “allow” rules) ==> need to change Helm chart network policy.<br><br>
+Here is the official doc for helm chart values:
+https://artifacthub.io/packages/helm/bitnami/mariadb-galera
+
+Get passwords
+```
+export MARIADB_ROOT_PASSWORD=$(
+  kubectl get secret -n database database-mariadb-galera \
+    -o jsonpath='{.data.mariadb-root-password}' | base64 -d
+)
+export MARIADB_GALERA_MARIABACKUP_PASSWORD=$(
+  kubectl get secret -n database database-mariadb-galera \
+    -o jsonpath='{.data.mariadb-galera-mariabackup-password}' | base64 -d
+)
+```
+Add network policy to values.yaml and update helm chart with new network policy settings from `values.yaml`
+```
+helm install database oci://registry-1.docker.io/bitnamicharts/mariadb-galera \
+  -n database \
+  -f values.yaml \
+  --set rootUser.password="$MARIADB_ROOT_PASSWORD" \
+  --set auth.rootPassword="$MARIADB_ROOT_PASSWORD" \
+  --set galera.mariabackup.password="$MARIADB_GALERA_MARIABACKUP_PASSWORD" \
+  --set image.registry=docker.io \
+  --set image.repository=bitnamilegacy/mariadb-galera \
+  --set image.tag=12.0.2-debian-12-r0
+```
+Now network policy has been updated according to the requirement.
+```
+kubectl describe networkpolicy database-mariadb-galera -n database
+```
