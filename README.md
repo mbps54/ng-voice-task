@@ -218,3 +218,11 @@ admin@control:~/code$ ./podwatch -kubeconfig ~/.kube/config -namespace database
 ```
 
 *I’m not familiar with the Go programming language, my main experience is with Python, which I actively use for automation and integration tasks. The Go solution I showed here was generated with the help of ChatGPT.*
+
+
+### 9. Use the Helm chart to deploy all above components
+```
+helm uninstall database -n database
+```
+
+I only deleted the resources that were created by Helm. The ones that were created directly from manifests can’t be removed as easily with Helm, since Helm doesn’t track them, but I don’t exclude that there might be some way to make it work.
