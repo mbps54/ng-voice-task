@@ -5,3 +5,16 @@ persistence:
   enabled: true
   size: 2Gi
   existingClaim: mariadb-local-pvc
+
+networkPolicy:
+  enabled: true
+  allowExternal: false
+  allowExternalEgress: false
+  ingressNSMatchLabels:
+    kubernetes.io/metadata.name: web
+  ingressNSPodMatchLabels:
+    app: web-server
+  extraIngress:
+    - ports:
+        - protocol: TCP
+          port: 3306

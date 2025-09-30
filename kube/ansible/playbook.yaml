@@ -1,7 +1,7 @@
 #ansible-playbook playbook.yaml
 #ansible-playbook playbook.yaml --tags general_settings
 #ansible-playbook playbook.yaml --tags install_k8s
-#ansible-playbook playbook.yaml --tags install_portainer
+#ansible-playbook playbook.yaml --tags network_policy
 
 
 ---
@@ -548,3 +548,119 @@
     - name: Print DB pods output
       ansible.builtin.debug:
         msg: "{{ db_pods.stdout_lines }}"
+
+
+- name: Run web server
+  hosts:
+    - control
+  gather_facts: no
+  become: no
+  tags:
+    - run_webserver
+
+  tasks:
+    - name: Copy all Kubernetes manifests
+      ansible.builtin.copy:
+        src: "../webserver-manifest/"
+        dest: "/home/admin/webserver-manifest/"
+        mode: "0644"
+        owner: admin
+        group: admin
+
+    - name: Apply manifests
+      ansible.builtin.command: >
+        kubectl apply -f /home/admin/webserver-manifest
+      register: webserver_apply
+      changed_when: webserver_apply.stdout is search('created|configured')
+
+
+- name: Run web server
+  hosts:
+    - control
+  gather_facts: no
+  become: no
+  tags:
+    - network_policy
+
+  tasks:
+    - name: Copy all Kubernetes manifests
+      ansible.builtin.copy:
+        src: "../network-policy/"
+        dest: "/home/admin/network-policy/"
+        mode: "0644"
+        owner: admin
+        group: admin
+
+    - name: Apply manifests
+      ansible.builtin.command: >
+        kubectl apply -f /home/admin/network-policy
+      register: webserver_apply
+      changed_when: webserver_apply.stdout is search('created|configured')
+
+
+- name: Install Calico
+  hosts: control
+  become: true
+  gather_facts: false
+  tags:
+    - calico
+  vars:
+    calico_version: "v3.28.0"
+    pod_cidr: "10.244.0.0/16"
+
+  tasks:
+    - name: Apply Calico manifest from upstream
+      ansible.builtin.command: >
+        kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/calico.yaml
+      register: calico_apply
+      changed_when: calico_apply.stdout is search('created|configured|unchanged')
+
+    - name: Set CALICO_IPV4POOL_CIDR on calico-node
+      ansible.builtin.command: >
+        kubectl -n kube-system set env ds/calico-node CALICO_IPV4POOL_CIDR={{ pod_cidr }}
+      register: set_env
+      changed_when: set_env.stdout is search('updated')
+
+    - name: Wait for calico-node rollout
+      ansible.builtin.command: >
+        kubectl -n kube-system rollout status ds/calico-node --timeout=300s
+      changed_when: false
+
+
+- name: Enforce Calico as the only active CNI
+  hosts: all
+  become: true
+  gather_facts: false
+  tags:
+    - calico
+
+  tasks:
+    - name: Remove Flannel CNI config if present
+      ansible.builtin.file:
+        path: /etc/cni/net.d/10-flannel.conflist
+        state: absent
+
+    - name: Rename Calico CNI config to load first
+      ansible.builtin.command: >
+        mv /etc/cni/net.d/10-calico.conflist /etc/cni/net.d/01-calico.conflist
+      args:
+        creates: /etc/cni/net.d/01-calico.conflist
+        removes: /etc/cni/net.d/10-calico.conflist
+      ignore_errors: true
+
+    - name: Restart CRI-O if installed
+      ansible.builtin.systemd:
+        name: crio
+        state: restarted
+      failed_when: false
+
+    - name: Restart containerd if installed
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+      failed_when: false
+
+    - name: Restart kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted

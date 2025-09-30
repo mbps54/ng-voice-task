@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-allow-web-3306
+  namespace: database
+spec:
+  # Select the database pods
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: mariadb-galera
+      app.kubernetes.io/instance: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        # Select web server pods
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: web
+          podSelector:
+            matchLabels:
+              app: web-server
+      ports:
+        - protocol: TCP
+          port: 3306
