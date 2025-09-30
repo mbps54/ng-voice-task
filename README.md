@@ -137,14 +137,14 @@ https://github.com/k8snetworkplumbingwg/multus-cni
 
 
 ### 7. Find a way to allow the deployment engineer to schedule specific replicas of the database cluster on specific k8s nodes
-1. Specifying a node in the application manifest (manual)
+1. **Manual**
 ```
 kind: Deployment
 spec:
     spec:
       nodeName: node02
 ```
-2. Use Node Selector
+2. **Node Selector**
 ```
 kubectl label nodes node01 ssdtype=slow
 kubectl label nodes node02 ssdtype=fast
@@ -156,7 +156,7 @@ spec:
     nodeSelector:
       ssdtype: fast
 ```
-3. Node Affinity (more flexible than Node Selector)
+3. **Node Affinity** (more flexible than Node Selector)
 ```
 affinity:
   nodeAffinity:
@@ -172,5 +172,5 @@ affinity:
           values:
           - zoneA
 ```
-4. Taint and Toleration
-Also flexible way to assign pods to nodes, for example can be used to reserve a node for DB pods only.
+4. **Taint and Toleration**<br>
+It is a flexible way to assign pods to nodes, for example can be used to reserve a node for DB pods only.
