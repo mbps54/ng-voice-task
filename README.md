@@ -14,6 +14,14 @@
 6. Find a flexible way to connect the Pod to a new network other than the Pods networks with proper routes. no LoadBalancer service is needed.
 7. Find a way to allow the deployment engineer to schedule specific replicas of the database cluster on specific k8s nodes.
 
+## Golang application task
+8. Write a Golang applications for monitoring the status of the above pods. This
+application should print a log at any point in time if there is any of the following
+changes:
+ - a new pod has been created
+ - pod has been deleted
+ - pod has been updated
+9. Use the Helm chart to deploy all above components
 
 ## Solution & Comments
 ### 1. Deploy a kubernetes cluster, locally or on a public cloud.
@@ -174,3 +182,39 @@ affinity:
 ```
 4. **Taint and Toleration**<br>
 It is a flexible way to assign pods to nodes, for example can be used to reserve a node for DB pods only.
+
+### 8. Write a Golang application
+Install and run script
+```
+curl -LO https://go.dev/dl/go1.22.5.linux-amd64.tar.gz
+sudo tar -C /usr/local -xzf go1.22.5.linux-amd64.tar.gz
+echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.bashrc
+export PATH=/usr/local/go/bin:$PATH
+go mod init podwatch
+go get k8s.io/api@v0.30.0
+go get k8s.io/apimachinery@v0.30.0
+go get k8s.io/client-go@v0.30.0
+go mod tidy
+go build -o podwatch .
+./podwatch -kubeconfig ~/.kube/config -namespace database
+```
+
+Result
+```
+admin@control:~/code$ ./podwatch -kubeconfig ~/.kube/config -namespace database
+2025-09-30T13:50:03.036Z | CREATED  pod database/database-mariadb-galera-0 phase=Running ip=10.244.104.2 node=node2
+2025-09-30T13:50:03.037Z | CREATED  pod database/database-mariadb-galera-1 phase=Pending ip=10.244.166.137 node=node1
+2025-09-30T13:50:03.123Z | watching pods (namespace=database, started=2025-09-30T13:50:03Z)
+2025-09-30T13:51:17.970Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:->10.244.166.137 node:->node1
+2025-09-30T13:51:18.115Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:10.244.166.137-> node:->node1
+2025-09-30T13:51:18.938Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:->10.244.166.137 node:->node1
+2025-09-30T13:51:18.963Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Failed ip:->10.244.166.137 node:->node1
+2025-09-30T13:51:18.999Z | DELETED  pod database/database-mariadb-galera-1
+2025-09-30T13:51:19.019Z | CREATED  pod database/database-mariadb-galera-1 phase=Pending ip= node=
+2025-09-30T13:51:19.067Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:-> node:->node1
+2025-09-30T13:51:19.085Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:-> node:->node1
+2025-09-30T13:51:19.512Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:-> node:->node1
+2025-09-30T13:51:20.939Z | UPDATED  pod database/database-mariadb-galera-1 phase:Pending->Pending ip:->10.244.166.138 node:->node1
+```
+
+*I’m not familiar with the Go programming language, my main experience is with Python, which I actively use for automation and integration tasks. The Go solution I showed here was generated with the help of ChatGPT.*
