@@ -40,3 +40,18 @@ ansible-playbook playbook.yaml --tags copy_manifests,run_database
 *I should be transparent here — I don’t have production experience running or supporting large-scale database clusters. My hands-on work with databases so far has been limited to smaller, secondary services where availability and performance requirements were not critical.*
 
 *For this task, I simply researched how to deploy a clustered database and applied the basic configuration steps, but I haven’t gone deep into the operational nuances such as tuning, backup/restore strategies, or troubleshooting in production. I’m aware this is not my area of strong expertise yet.*
+
+### 3. Deploy a Web Server on K8s
+Custom config: NGINX uses `nginx.conf` from the ConfigMap.<br>
+Init container: renders `index.html` into a shared `emptyDir` using:
+- POD_IP from the Downward API (status.podIP), and
+- HOSTNAME (pod name) to compute the suffix.<br>
+Ansible playbook has been updated with tasks with tag `run_webserver`
+```
+ansible-playbook playbook.yaml --tags run_webserver
+```
+Check it
+```
+curl http://139.162.150.79:30080
+curl http://139.162.150.196:30080
+```
