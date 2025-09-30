@@ -134,3 +134,43 @@ I would create an **Ansible playbook** to automate the restore procedure and use
 ### 6. Find a flexible way to connect the Pod to a new network other than the Pods networks with proper routes
 I haven’t deployed this kind of multi-network setup in production, because there was no real business need. However, I’ve always been interested in exploring it in more detail. As I can see, **multus** is a flexible way to connect Pods to external networks with proper routing.
 https://github.com/k8snetworkplumbingwg/multus-cni
+
+
+### 7. Find a way to allow the deployment engineer to schedule specific replicas of the database cluster on specific k8s nodes
+1. Specifying a node in the application manifest (manual)
+```
+kind: Deployment
+spec:
+    spec:
+      nodeName: node02
+```
+2. Use Node Selector
+```
+kubectl label nodes node01 ssdtype=slow
+kubectl label nodes node02 ssdtype=fast
+```
+change Deployment
+```
+kind: Deployment
+spec:
+    nodeSelector:
+      ssdtype: fast
+```
+3. Node Affinity (more flexible than Node Selector)
+```
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: disktype
+          operator: In
+          values:
+          - ssd
+        - key: zone
+          operator: NotIn
+          values:
+          - zoneA
+```
+4. Taint and Toleration
+Also flexible way to assign pods to nodes, for example can be used to reserve a node for DB pods only.
