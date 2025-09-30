@@ -131,3 +131,6 @@ For production databases, I would consider a more specialized backup and recover
 I would create an **Ansible playbook** to automate the restore procedure and use a **Kubernetes CronJob** to schedule regular backups into reliable storage.
 
 
+### 6. Find a flexible way to connect the Pod to a new network other than the Pods networks with proper routes
+I haven’t deployed this kind of multi-network setup in production, because there was no real business need. However, I’ve always been interested in exploring it in more detail. As I can see, **multus** is a flexible way to connect Pods to external networks with proper routing.
+https://github.com/k8snetworkplumbingwg/multus-cni
