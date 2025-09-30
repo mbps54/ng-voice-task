@@ -1,0 +1,7 @@
+auth:
+  rootPassword: "MyRootPass123"
+
+persistence:
+  enabled: true
+  size: 2Gi
+  existingClaim: mariadb-local-pvc

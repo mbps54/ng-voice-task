@@ -473,3 +473,78 @@
       args:
         creates: /usr/local/bin/helm
 
+
+- name: Copy manifests
+  hosts:
+    - control
+  gather_facts: no
+  become: no
+  tags:
+    - copy_manifests
+
+  tasks:
+    - name: Copy all Kubernetes manifests
+      ansible.builtin.copy:
+        src: "../database-manifest/k8s_manifests/"
+        dest: "/home/admin/k8s_manifests/"
+        mode: "0644"
+        owner: admin
+        group: admin
+
+    - name: Copy values.yaml
+      ansible.builtin.copy:
+        src: "../database-manifest/values.yaml"
+        dest: "/home/admin/values.yaml"
+        mode: "0644"
+        owner: admin
+        group: admin
+
+
+- name: Run database
+  hosts:
+    - control
+  gather_facts: no
+  become: no
+  tags:
+    - run_database
+
+  tasks:
+    - name: Apply namespace manifest
+      ansible.builtin.command: >
+        kubectl apply -f /home/admin/k8s_manifests/ns.yaml
+      register: ns_apply
+      changed_when: ns_apply.stdout is search('created|configured')
+
+    - name: Apply PersistentVolume
+      ansible.builtin.command: >
+        kubectl apply -f /home/admin/k8s_manifests/pv.yaml
+      register: pv_apply
+      changed_when: pv_apply.stdout is search('created|configured')
+
+    - name: Apply PersistentVolumeClaim
+      ansible.builtin.command: >
+        kubectl apply -f /home/admin/k8s_manifests/pvc.yaml
+      register: pvc_apply
+      changed_when: pvc_apply.stdout is search('created|configured')
+
+    - name: Install MariaDB Galera via Helm
+      ansible.builtin.command: >
+        helm install database oci://registry-1.docker.io/bitnamicharts/mariadb-galera
+        -n database
+        -f ~/values.yaml
+        --set image.registry=docker.io \
+        --set image.repository=bitnamilegacy/mariadb-galera \
+        --set image.tag=12.0.2-debian-12-r0
+      changed_when: true
+    - name: Wait for DB pods to start
+      ansible.builtin.pause:
+        seconds: 10
+
+    - name: Show DB pods
+      ansible.builtin.command: kubectl get pods -n database -o wide
+      register: db_pods
+      changed_when: false
+
+    - name: Print DB pods output
+      ansible.builtin.debug:
+        msg: "{{ db_pods.stdout_lines }}"
