@@ -124,3 +124,10 @@ Now network policy has been updated according to the requirement.
 ```
 kubectl describe networkpolicy database-mariadb-galera -n database
 ```
+
+### 5. Suggest a Disaster recovery solution for the DB
+I usually restore my databases from Persistent Volumes, which are replicated hourly to a backup storage location. However, this is only a service database used for IT infrastructure automation, not a production workload.<br>
+For production databases, I would consider a more specialized backup and recovery solution that takes database specifics into account and stores consistent dumps in a reliable backup system. I don’t have hands-on experience with this yet. ChatGPT recommends tools such as Percona XtraBackup for that use case.<br>
+I would create an **Ansible playbook** to automate the restore procedure and use a **Kubernetes CronJob** to schedule regular backups into reliable storage.
+
+
