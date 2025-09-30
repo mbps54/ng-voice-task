@@ -34,6 +34,9 @@ ansible-playbook playbook.yaml
 For this task, Bitnami Helm chart for MariaDB Galera was chosen.
 By default, there is no PV/PVC in Helm chart by default, they needed to be created first.
 Ansible playbook has been updated with tasks with tags `copy_manifests` and `run_database`.<br><br>
+```
+ansible-playbook playbook.yaml --tags copy_manifests,run_database
+```
 *I should be transparent here — I don’t have production experience running or supporting large-scale database clusters. My hands-on work with databases so far has been limited to smaller, secondary services where availability and performance requirements were not critical.*
 
 *For this task, I simply researched how to deploy a clustered database and applied the basic configuration steps, but I haven’t gone deep into the operational nuances such as tuning, backup/restore strategies, or troubleshooting in production. I’m aware this is not my area of strong expertise yet.*
